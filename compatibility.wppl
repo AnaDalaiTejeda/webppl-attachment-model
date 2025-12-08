@@ -1,0 +1,128 @@
+// hidden C + signals + shocks
+// This file is about the environment and the mapping from C -> signals,
+// plus how agents with attachment styles interpret those signals.
+
+
+// ---- 1. Hidden true compatibility C ----
+// This is the "true" but unobserved compatibility of a given pair.
+// For now we assume C ~ Normal(0, 1) for the population.
+// Draw a latent compatibility value for one relationship.
+// C > 0  -> generally good fit
+// C < 0  -> generally poor fit
+
+var sampleCompatibility = function() {
+  return sample(Gaussian({mu: 0, sigma: 1}));
+};
+
+
+// ---- 2. Helper: sigmoid for mapping C to probabilities ----
+
+var sigmoid = function(x) {
+  return 1 / (1 + Math.exp(-x));
+};
+
+
+// ---- 3. Base signal generation from C ----
+// Raw signals s_raw in {-1, 0, +1} represent how good a given interaction was.
+// Higher C should make +1 more likely, lower C should make -1 more likely.
+
+var baseSignalDistribution = function(C) {
+  // We'll build *unnormalized* "scores" for each of {-1, 0, +1}
+  // and then normalize them into probabilities (so we never have to
+  // reassign pZero, pPos, etc.).
+
+  var alpha = 1.0;
+
+  // Raw “strength” for positive and negative signals:
+  var rawPos = sigmoid(alpha * C);   // grows with C
+  var rawNeg = sigmoid(-alpha * C);  // grows as C gets more negative
+
+  // Neutral gets a constant baseline mass.
+  var rawZero = 1;
+
+  // Normalize to get valid probabilities.
+  var Z = rawPos + rawNeg + rawZero;
+
+  var pPos  = rawPos  / Z;
+  var pNeg  = rawNeg  / Z;
+  var pZero = rawZero / Z;
+
+  return {
+    vs: [-1, 0, +1],
+    ps: [pNeg, pZero, pPos]
+  };
+};
+
+
+// ---- 4. Style-specific interpretation of signals ----
+// Raw signals come from the environment, but each agent *interprets* them
+// through their attachment-style-specific biases (from attachment.wppl).
+// For this layer, we assume we receive a `style` object with fields: biasPos, biasNeg, biasNeutral
+// and we output an "interpreted" signal s_interp (can be non-integer).
+var sampleRawSignal = function(C) {
+  var dist = baseSignalDistribution(C);
+  return categorical({vs: dist.vs, ps: dist.ps});
+};
+
+var interpretSignal = function(style, rawSignal) {
+  if (rawSignal === +1) {
+    return rawSignal + style.biasPos;
+  } else if (rawSignal === -1) {
+    return rawSignal + style.biasNeg;
+  } else { // rawSignal === 0
+    return rawSignal + style.biasNeutral;
+  }
+};
+
+
+// ---- 5. Shocks z (rare big events) ----
+// Shocks are unexpected big positive or negative events that override
+// the usual C-based signal. They model things like sudden betrayals or surprising acts of care.
+
+var sampleShock = function() {
+  // pShock controls how often shocks happen.
+  var pShock = 0.1; // 10% chance per round; tweak later if needed.
+
+  if (!flip(pShock)) {
+    return null; // no shock this round
+  }
+
+  // If a shock does happen, it can be strongly positive or negative.
+  // For now, 50/50.
+  return flip(0.5) ? +1 : -1;
+};
+
+
+// Combine C-based signal and shocks:
+// If a shock happens, it overrides the base signal;
+// otherwise we just use the normal signal from C.
+var sampleRawSignalWithShock = function(C) {
+  var z = sampleShock();
+  if (z !== null) {
+    return z;
+  } else {
+    return sampleRawSignal(C);
+  }
+};
+
+
+// ---- 6. Putting it together for a given style ----
+// Convenience helpers that the dynamics layer can call.
+// sampleInterpretedSignal(C, style):
+//   - draws a raw signal from C
+//   - passes it through the style's interpretation bias
+//
+// sampleInterpretedSignalWithShock(C, style):
+//   - same as above, but respects shocks
+
+var sampleInterpretedSignal = function(C, style) {
+  var sRaw = sampleRawSignal(C);
+  return interpretSignal(style, sRaw);
+};
+
+var sampleInterpretedSignalWithShock = function(C, style) {
+  var sRaw = sampleRawSignalWithShock(C);
+  return interpretSignal(style, sRaw);
+};
+
+

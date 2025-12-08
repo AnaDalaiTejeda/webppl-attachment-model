@@ -1,0 +1,175 @@
+// main.wppl
+// Experiment runner for the attachment / compatibility / dynamics model.
+
+// Run with:
+//   webppl main.wppl --require .
+
+// ---- 1. Helper: run one demo trajectory and print it nicely ----
+
+var runDemoTrajectory = function(styleAName, styleBName, options) {
+  // Don't reassign params; create a local opts variable.
+  var opts = (options === undefined) ? {} : options;
+
+  console.log("=== Demo trajectory: " + styleAName + " vs " + styleBName + " ===");
+
+  var res = simulateRelationship(styleAName, styleBName, opts);
+
+  console.log("True compatibility C:", res.C);
+  console.log("LeftA:", res.leftA, "at round:", res.leaveRoundA);
+  console.log("LeftB:", res.leftB, "at round:", res.leaveRoundB);
+
+  console.log("muA history:", res.muAHistory);
+  console.log("muB history:", res.muBHistory);
+  console.log("signals to A:", res.signalAHistory);
+  console.log("signals to B:", res.signalBHistory);
+
+  // If you want to copy-paste into Python/Excel for plotting, you can also print JSON:
+  // console.log(JSON.stringify(res));
+};
+
+
+// ---- 2. Helper: summarize a pairing statistically ----
+// Uses WebPPL's Infer + expectation to estimate:
+//   - P(A leaves)
+//   - P(B leaves)
+//   - P(no one leaves)
+//   - average final muA, muB
+//   - average leave round for A, B (conditional on leaving)
+
+var summarizePairing = function(styleAName, styleBName, options, numSamples) {
+  // Local copies instead of reassigning params.
+  var opts = (options === undefined) ? {} : options;
+  var samples = (numSamples === undefined) ? 300 : numSamples;
+
+  console.log("\n=== Summary over many simulations: " +
+              styleAName + " vs " + styleBName + " ===");
+
+  var dist = Infer({method: "forward", samples: samples}, function() {
+    return simulateRelationship(styleAName, styleBName, opts);
+  });
+
+  // Helper to get last element of an array
+  var last = function(xs) {
+    return xs[xs.length - 1];
+  };
+
+  var sumArray = function(xs) {
+    if (xs.length === 0) {
+      return 0;
+    } else {
+      return xs[0] + sumArray(xs.slice(1));
+    }
+  };
+
+  // How well does each person's final belief approximate true C?
+  var mseA = expectation(dist, function(r) {
+    var finalMuA = last(r.muAHistory);
+    return Math.pow(finalMuA - r.C, 2);
+  });
+
+  var mseB = expectation(dist, function(r) {
+    var finalMuB = last(r.muBHistory);
+    return Math.pow(finalMuB - r.C, 2);
+  });
+
+  console.log("MSE final belief vs true C - A:", mseA);
+  console.log("MSE final belief vs true C - B:", mseB);
+
+  // False breakup or stuck in bad relationships
+  var pFalseBreakup = expectation(dist, function(r) {
+    var trueGood = (r.C > 0);
+    var breakup = (r.leftA || r.leftB);
+    return (trueGood && breakup) ? 1 : 0;
+  });
+
+  var pStayBad = expectation(dist, function(r) {
+    var trueBad = (r.C < 0);
+    var noBreakup = (!r.leftA && !r.leftB);
+    return (trueBad && noBreakup) ? 1 : 0;
+  });
+
+  console.log("P(false breakup | true good):", pFalseBreakup);
+  console.log("P(stay in bad relationship):", pStayBad);
+
+
+  // Breakup probabilities
+  var pALeaves = expectation(dist, function(r) { return r.leftA ? 1 : 0; });
+  var pBLeaves = expectation(dist, function(r) { return r.leftB ? 1 : 0; });
+  var pNoOneLeaves = expectation(dist, function(r) {
+    return (!r.leftA && !r.leftB) ? 1 : 0;
+  });
+
+  // Average final beliefs
+  var avgFinalMuA = expectation(dist, function(r) {
+    return last(r.muAHistory);
+  });
+  var avgFinalMuB = expectation(dist, function(r) {
+    return last(r.muBHistory);
+  });
+
+  // Average leave rounds (conditional on leaving)
+  var avgLeaveRoundA = expectation(dist, function(r) {
+    return r.leftA ? r.leaveRoundA : 0;
+  }) / Math.max(pALeaves, 1e-6);
+
+  var avgLeaveRoundB = expectation(dist, function(r) {
+    return r.leftB ? r.leaveRoundB : 0;
+  }) / Math.max(pBLeaves, 1e-6);
+
+  // Average experienced signal for A and B
+  var avgSignalA = expectation(dist, function(r) {
+    var len = r.signalAHistory.length;
+    if (len === 0) {
+      return 0;
+    }
+    var sum = sumArray(r.signalAHistory);
+    return sum / len;
+  });
+
+  var avgSignalB = expectation(dist, function(r) {
+    var len = r.signalBHistory.length;
+    if (len === 0) {
+      return 0;
+    }
+    var sum = sumArray(r.signalBHistory);
+    return sum / len;
+  });
+
+  console.log("Average experienced signal A:", avgSignalA);
+  console.log("Average experienced signal B:", avgSignalB);
+
+  console.log("P(A leaves):", pALeaves);
+  console.log("P(B leaves):", pBLeaves);
+  console.log("P(no one leaves):", pNoOneLeaves);
+
+  console.log("Average final muA:", avgFinalMuA);
+  console.log("Average final muB:", avgFinalMuB);
+
+  console.log("Average leave round A (conditional on leaving):", avgLeaveRoundA);
+  console.log("Average leave round B (conditional on leaving):", avgLeaveRoundB);
+
+  // If you want CSV-style output for easy plotting, uncomment:
+  // console.log("CSV," + styleAName + "," + styleBName + "," +
+  //             pALeaves + "," + pBLeaves + "," + pNoOneLeaves + "," +
+  //             avgFinalMuA + "," + avgFinalMuB + "," +
+  //             avgLeaveRoundA + "," + avgLeaveRoundB);
+};
+
+
+// ---- 3. Run some experiments ----
+
+// 3a. A few demo trajectories for plotting belief over time.
+runDemoTrajectory("secure", "secure", {T: 20, useShocks: false, stochasticDecision: false});
+runDemoTrajectory("anxious", "avoidant", {T: 20, useShocks: true, stochasticDecision: false});
+
+// 3b. Aggregated stats for all 6 pairings.
+// We call summarizePairing explicitly to avoid WebPPL loop issues.
+
+summarizePairing("secure",  "secure",  {T: 20, useShocks: true, stochasticDecision: false}, 400);
+summarizePairing("secure",  "anxious", {T: 20, useShocks: true, stochasticDecision: false}, 400);
+summarizePairing("secure",  "avoidant",{T: 20, useShocks: true, stochasticDecision: false}, 400);
+summarizePairing("anxious", "anxious", {T: 20, useShocks: true, stochasticDecision: false}, 400);
+summarizePairing("anxious", "avoidant",{T: 20, useShocks: true, stochasticDecision: false}, 400);
+summarizePairing("avoidant","avoidant",{T: 20, useShocks: true, stochasticDecision: false}, 400);
+
+console.log("\n=== Done. ===");

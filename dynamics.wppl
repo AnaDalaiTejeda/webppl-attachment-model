@@ -1,0 +1,150 @@
+// dynamics.wppl
+// Belief update + one-relationship simulation.
+
+// ---- 1. Belief update rule ----
+
+var updateBelief = function(mu, style, s) {
+  if (s > 0) {
+    return mu + style.lambdaPos * s;
+  } else if (s < 0) {
+    return mu + style.lambdaNeg * s;
+  } else {
+    return mu;
+  }
+};
+
+
+// ---- 2. Decision rule: stay vs leave ----
+
+var shouldLeaveDeterministic = function(style, mu) {
+  return mu < style.leaveThreshold;
+};
+
+var softmaxLeaveProb = function(uStay, uLeave, temp) {
+  var beta = 1.0 / temp;
+  var expStay = Math.exp(beta * uStay);
+  var expLeave = Math.exp(beta * uLeave);
+  return expLeave / (expStay + expLeave);
+};
+
+var shouldLeaveStochastic = function(style, mu) {
+  var uStay = mu;
+  var uLeave = 0;
+  var pLeave = softmaxLeaveProb(uStay, uLeave, style.temp);
+  return flip(pLeave);
+};
+
+
+// ---- 3. One-relationship simulation (recursive, no loops) ----
+
+var simulateRelationship = function(styleAName, styleBName, options) {
+  var opts = (options === undefined) ? {} : options;
+
+  var T = (opts.T === undefined) ? 20 : opts.T;
+  var useShocks = (opts.useShocks === undefined) ? true : opts.useShocks;
+  var stochasticDecision = (opts.stochasticDecision === undefined) ? false : opts.stochasticDecision;
+
+  var styleA = getAttachmentStyle(styleAName);
+  var styleB = getAttachmentStyle(styleBName);
+
+  var C = sampleCompatibility();
+
+  var muA0 = styleA.priorMu;
+  var muB0 = styleB.priorMu;
+
+  var initState = {
+    t: 1,
+    muA: muA0,
+    muB: muB0,
+    leftA: false,
+    leftB: false,
+    muAHistory: [muA0],
+    muBHistory: [muB0],
+    signalAHistory: [],
+    signalBHistory: [],
+    leaveRoundA: null,
+    leaveRoundB: null
+  };
+
+  var step = function(state) {
+    if ((state.t > T) || (state.leftA && state.leftB)) {
+      return {
+        C: C,
+        styleA: styleAName,
+        styleB: styleBName,
+        muAHistory: state.muAHistory,
+        muBHistory: state.muBHistory,
+        signalAHistory: state.signalAHistory,
+        signalBHistory: state.signalBHistory,
+        leftA: state.leftA,
+        leftB: state.leftB,
+        leaveRoundA: state.leftA ? state.leaveRoundA : null,
+        leaveRoundB: state.leftB ? state.leaveRoundB : null
+      };
+    }
+
+    // 1. Sample interpreted signals
+    var sA = useShocks
+        ? sampleInterpretedSignalWithShock(C, styleA)
+        : sampleInterpretedSignal(C, styleA);
+
+    var sB = useShocks
+        ? sampleInterpretedSignalWithShock(C, styleB)
+        : sampleInterpretedSignal(C, styleB);
+
+    var signalAHistory2 = state.signalAHistory.concat([sA]);
+    var signalBHistory2 = state.signalBHistory.concat([sB]);
+
+    // 2. Update beliefs (if still in relationship)
+    var muA2 = state.leftA ? state.muA : updateBelief(state.muA, styleA, sA);
+    var muB2 = state.leftB ? state.muB : updateBelief(state.muB, styleB, sB);
+
+    var muAHistory2 = state.muAHistory.concat([muA2]);
+    var muBHistory2 = state.muBHistory.concat([muB2]);
+
+    // 3. Decide if they leave this round — no assignments, just expressions
+    var leaveA = (!state.leftA) && (
+      stochasticDecision
+        ? shouldLeaveStochastic(styleA, muA2)
+        : shouldLeaveDeterministic(styleA, muA2)
+    );
+
+    var leaveB = (!state.leftB) && (
+      stochasticDecision
+        ? shouldLeaveStochastic(styleB, muB2)
+        : shouldLeaveDeterministic(styleB, muB2)
+    );
+
+    var leftA2 = state.leftA || leaveA;
+    var leftB2 = state.leftB || leaveB;
+
+    var leaveRoundA2 =
+      state.leftA
+        ? state.leaveRoundA
+        : (leaveA ? state.t : state.leaveRoundA);
+
+    var leaveRoundB2 =
+      state.leftB
+        ? state.leaveRoundB
+        : (leaveB ? state.t : state.leaveRoundB);
+
+    // 4. Build next state
+    var nextState = {
+      t: state.t + 1,
+      muA: muA2,
+      muB: muB2,
+      leftA: leftA2,
+      leftB: leftB2,
+      muAHistory: muAHistory2,
+      muBHistory: muBHistory2,
+      signalAHistory: signalAHistory2,
+      signalBHistory: signalBHistory2,
+      leaveRoundA: leaveRoundA2,
+      leaveRoundB: leaveRoundB2
+    };
+
+    return step(nextState);
+  };
+
+  return step(initState);
+};

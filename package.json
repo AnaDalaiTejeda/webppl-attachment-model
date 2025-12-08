@@ -1,0 +1,11 @@
+{
+  "name": "attachment-model",
+  "version": "1.0.0",
+  "webppl": {
+    "wppl": [
+      "attachment.wppl",
+      "compatibility.wppl",
+      "dynamics.wppl"
+    ]
+  }
+}

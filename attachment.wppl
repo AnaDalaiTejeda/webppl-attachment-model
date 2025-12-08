@@ -1,0 +1,121 @@
+// attachment style definitions (priors, learning rates)
+
+
+// ---- 1. Helper: base prior over compatibility C ----
+// This is the "default" prior for compatibility across the population.
+// Individual styles will shift this (e.g., anxious a bit optimistic but uncertain,
+// avoidant slightly pessimistic, secure fairly optimistic but not extreme).
+
+var defaultCompatibilityPrior = {
+  mu0: 0,    // center of population prior over C
+  sigma0: 1  // how spread out compatibility is in the population
+};
+
+
+// ---- 2. Factory for style parameter objects ----
+// We’ll represent each attachment style as a JS object with:
+// - priorMu, priorSigma: prior over hidden compatibility C
+// - lambdaPos, lambdaNeg: how strongly to update beliefs from + / - signals
+// - biasPos, biasNeg, biasNeutral: interpretation bias on raw signals
+// - temp: decision noise parameter (for softmax stay/leave policies later)
+// - leaveThreshold: belief level below which the agent exits the relationship
+
+var makeAttachmentStyle = function(opts) {
+  return {
+    name: opts.name,
+
+    // Prior over C: Normal(priorMu, priorSigma)
+    priorMu: opts.priorMu,
+    priorSigma: opts.priorSigma,
+
+    // Learning rates for signals
+    lambdaPos: opts.lambdaPos,
+    lambdaNeg: opts.lambdaNeg,
+
+    // Interpretation biases: added on top of the raw signal value
+    // (e.g., anxious might push neutral/positive slightly negative)
+    biasPos: opts.biasPos,
+    biasNeg: opts.biasNeg,
+    biasNeutral: opts.biasNeutral,
+
+    // Softmax temperature for decisions (higher = more random, lower = more "rational")
+    temp: opts.temp,
+
+    // Threshold on belief about C for leaving
+    leaveThreshold: opts.leaveThreshold
+  };
+};
+
+
+// ---- 3. Library of concrete attachment styles ----
+// These numbers are guesses. TWEAK LATER.
+// SECURE: relatively optimistic prior, symmetric learning from + and -, minimal interpretation bias, medium noise.
+
+var secureStyle = makeAttachmentStyle({
+  name: "secure",
+  priorMu: 0.5,                 // expects relationships to be somewhat good
+  priorSigma: 0.75,             // fairly confident in that prior
+  lambdaPos: 0.4,               // updates moderately to good signals
+  lambdaNeg: 0.4,               // and equally to bad signals
+  biasPos: 0.0,                 // interprets signals at face value
+  biasNeg: 0.0,
+  biasNeutral: 0.0,
+  temp: 1.0,                    // moderate decision noise
+  leaveThreshold: -0.5          // will tolerate a bit of negativity before leaving
+});
+
+// ANXIOUS: slightly optimistic but *uncertain* prior, strong learning from negatives, negative interpretation bias (especially for neutral).
+
+var anxiousStyle = makeAttachmentStyle({
+  name: "anxious",
+  priorMu: 0.2,                 // wants connection but not super confident
+  priorSigma: 1.2,              // higher uncertainty about C
+  lambdaPos: 0.3,               // updates a bit from good signals
+  lambdaNeg: 0.8,               // updates strongly from bad signals (negativity bias)
+  biasPos: -0.1,                // slightly downweights positives
+  biasNeg: -0.2,                // pushes bad signals even more negative
+  biasNeutral: -0.3,            // tends to read neutral as mildly negative
+  temp: 0.7,                    // lower temp → more deterministic reactions
+  leaveThreshold: -0.8          // has an even lower leave thresh hold because they are scared to let go.
+});
+
+// AVOIDANT: slightly pessimistic prior, weak learning from positives,
+// biased against closeness (treats + as intrusive).
+var avoidantStyle = makeAttachmentStyle({
+  name: "avoidant",
+
+  priorMu: -0.2,                // expects relationships to be somewhat difficult
+  priorSigma: 0.9,              // moderate uncertainty
+
+  lambdaPos: 0.2,               // slow to update from good signals
+  lambdaNeg: 0.5,               // somewhat responsive to bad signals
+
+  biasPos: -0.4,                // tends to interpret strong positive signals as "too much"
+  biasNeg: 0.0,                 // takes negative at face value
+  biasNeutral: 0.1,             // can interpret distance/neutrality as slightly positive/safe
+
+  temp: 1.3,                    // higher temp → more noisy/inconsistent stay/leave choices
+  leaveThreshold: 0.0           // leaves as soon as belief is not clearly positive, quick to leave.
+});
+
+// LATER POTENIALLY ADD "secure-anxious" or "fearful-avoidant" hybrids
+var attachmentStyles = {
+  secure: secureStyle,
+  anxious: anxiousStyle,
+  avoidant: avoidantStyle
+};
+
+
+// ---- 4. Public API for rest of project ----
+
+var getAttachmentStyle = function(name) {
+  if (!attachmentStyles[name]) {
+    error("Unknown attachment style: " + name);
+  }
+  return attachmentStyles[name];
+};
+
+// Convenience: list all styles (useful for looping over pairings)
+var allStyleNames = ["secure", "anxious", "avoidant"];
+
+
