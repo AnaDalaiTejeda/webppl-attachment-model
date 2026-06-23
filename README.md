@@ -1,1 +1,1 @@
-Does a couple who is more compatable or have complimentary attachment styles last longer? The answer is the latter, check out paper for more info.
+Does a couple who is more compatable or have complimentary attachment styles last longer? The answer is the latter. A Bayesian approch to relationships, check out paper for more info.
